@@ -1,0 +1,230 @@
+\chapter{Kartierungsalgorithmen} \label{Kap3}
+
+In diesem Kapitel wird auf die \ac{ROS}-Packages für die Kartierung eingegangen und deren Unterschiede dargestellt. Dazu wird zunächst immer der Algorithmus und dann das Konzept der Integration in das  \acl{ROS} dargestellt.
+
+Der Anwender sieht während der Algorithmus ausgeführt wird, die Karte, während diese erstellt wird, sofern nicht einfach nur ein Bag-File aufgezeichnet wird. Die Ausgabe ist eine 2D Grid Karte mit jeweils unterschiedlicher Auflösung.
+
+\section{cartographer}
+
+\subsection{Algorithmus}
+
+Der Algorithmus basiert auf einem lokalen und einem globalen Ansatz. Beide Ansätze optimieren die Position der Scans, welche als Formel $ \xi = \left( \xi_{ x }, \xi_{ y }, \xi_{ 0 } \right) $ bestehend aus einer Translation mit $ \xi_{ x } $ und $ \xi_{ y } $ sowie einer Rotation $ \xi_{ 0 } $, definiert sind. Es besteht die Möglichkeit, eine \ac{IMU} zu nutzen, welche hilft, die Scans besser auf die 2D-Welt zu projizieren.
+
+Der lokale Ansatz nimmt die Aufzeichnungen des Laser-Scanners entgegen. Diese werden zu einer sogenannten Submap an der bestmöglichen geschätzten Position hinzugefügt. Eine Submap ist ein Teil der gesamten aufgenommenen Karte. Dieser Prozess wird Scan Matching genannt, und basiert darauf die Lage des Scans zu finden, der die Wahrscheinlichkeitsfunktion der Scanpunkte in der Submap maximiert. Es wird als Lösungsmethode die Methode der nichtlinearen kleinsten Quadrate genutzt.
+\begin{align}
+    \underset{\xi}{\argmin } { \sum_{k=1}^K {(1 - M_{smooth}(T_{\xi}h_{k}))^{ 2 }} }
+\end{align}
+$ T_{\xi} $ transformiert $ h_{k} $ vom Scan-Frame zum Sumap-Frame. $ M_{smooth}: R^2 \to R $ bildet die Werte in der lokalen Submap ab. Es wird eine bikubische Interpolation genutzt. Diese sorgt dafür, dass hauptsächlich Werte im Bereich 0 bis 1 vorkommen. Werte außerhalb können auftreten, schaden aber dem Algorithmus nicht.
+
+Das Scan Matching produziert kleine Fehler, die in der Summe große Auswirkungen haben können. Daher besteht das System nicht nur aus einem lokalen Ansatz, welcher auch Frontend genannt wird, sondern auch aus einem globalen Ansatz, der auch Backend genannt wird. Dieser optimiert die lokalen Berechnungen.
+
+Der globale Ansatz wird in regelmäßigen Zeitabständen unabhängig vom lokalen Ansatz durchgeführt. Wenn eine Submap fertig ist, läuft ein sogenanntes Loop Closing ab. Dieser Prozess fügt die einzelnen Submaps zu einer großen Karte zusammen. Dies erfolgt dadurch, dass nahe und passende Scans gesucht werden. Der Algorithmus hinter der Optimerung der Scans und Submaps nennt sich Sparse Pose Adjustment. Es handelt sich dabei wieder um ein Optimierungsproblem. Dieses ist wie folgt definiert:
+\begin{align}
+    \underset{\Xi^m,\Xi^s}{\argmin } { \sum_{ij} {\rho(\xi_{i}^m,\xi_{j}^s;\Sigma_{ij},\xi_{ij})} }
+\end{align}
+Dabei wird die Lage der Submaps $ \Xi^m = \left\{\xi_{i}^m\right\}_{i=1,...,m} $, sowie die Lage der Scans $ \Xi^s = \left\{\xi_{j}^s\right\}_{j=1,...,n} $ mit einigen Randbedingungen wie $ \Sigma_{ij} $ und $ \xi_{ij} $ optimiert. Die Verlustfunktion $ \rho $ soll den Einfluss von Ausreißern verringern. 
+
+Insgesamt muss das Loop Closing schneller sein als neue Scans hinzugefügt werden. Durch diesen Prozess werden Loops geschlossen, wenn man einen Ort wiederbesucht. Dazu wird unter anderem ein Branch-and-bound Scan Matching verwendet. \autocite{45466}
+
+\subsection{Verwendung im \acl{ROS}} \label{rosVerwendungCartographer}
+
+Damit der Cartographer eine Karte im \ac{ROS} erstellen kann, müssen zunächst einmal zwei Nodes gestartet werden. Die erste Node ist die Cartographer Node, welche für die simultane Positions- und Kartenerstellung genutzt wird. Dieser Node erwartet eine Liste von Topics, die sie abonniert. (siehe \autoref{Cartographer-Topic-Abonnements}). Der Cartographer publiziert das Ergebnis seiner Berechnungen dann in weiteren Topics (siehe \autoref{Cartographer-Topic-Veröffentlichungen}).
+
+\begin{table}[t]
+  \caption{Topic-Abonnements des Packages Cartographer}
+  \label{Cartographer-Topic-Abonnements}
+  \centering
+  \sffamily
+  \begin{footnotesize}
+    \begin{tabular}{l l l}
+    \toprule
+    \textbf{Topic} & \textbf{Topic-Typ} & \textbf{Optional}\\
+    \midrule
+    scan	& sensor\_msgs/LaserScan & Nein\\
+    echoes	& sensor\_msgs/MultiEchoLaserScan & Nein\\
+    points2	& sensor\_msgs/PointCloud2 & Nein\\
+    imu	& sensor\_msgs/Imu & Ja\\
+    odom	& nav\_msgs/Odometry & Ja\\
+    \bottomrule
+    \end{tabular}
+  \end{footnotesize}
+  \rmfamily
+\end{table}
+
+\begin{table}[t]
+  \caption{Topic-Veröffentlichungen des Packages Cartographer}
+  \label{Cartographer-Topic-Veröffentlichungen}
+  \centering
+  \sffamily
+  \begin{footnotesize}
+    \begin{tabular}{l l l}
+    \toprule
+    \textbf{Topic} & \textbf{Topic-Typ}\\
+    \midrule
+    scan\_matched\_points2 & sensor\_msgs/PointCloud2\\
+    submap\_list & cartographer\_ros\_msgs/SubmapList\\
+    \bottomrule
+    \end{tabular}
+  \end{footnotesize}
+  \rmfamily
+\end{table}
+
+Die zweite Node ist die Occupancy grid Node, welche die Submaps über das Topic submap\_list verarbeitet und daraus eine Karte erstellt. Das Format in \ac{ROS} ist das nav\_msgs/OccupancyGrid-Format.
+
+Des weiteren benötigt dieser Prozess für jede Sensorkomponente eine Transformation des TF2-Packages. Für jede Komponente sollte entweder ein robot\_state\_publisher oder ein static\_transform\_publisher auf das tracking\_frame sowie das published\_frame, das in der Konfigurationsdatei festgelegt wurde, gesetzt werden. Ein Beispiel dafür ist eine Transformation von der Basis (alias base\_link) zum Laserscanner (alias scan).
+
+Zusätzlich stellt der Cartographer auch Transformationen zur Verfügung. Diese sind je nach Konfiguration die Transformationen von der Karte (alias map) zur Odometrie (alias odom) und zur Basis (alias base\_link). \autocite{cartographerRosWiki}
+
+\section{hector\_mapping}
+
+\subsection{Algorithmus}
+
+Im Gegensatz zum Cartographer basiert der SLAM-Algorithmus hector\_mapping nicht auf der gängigen Konstellation eines Frontends und eines Backends. Das hector\_mapping bietet nur ein Frontend an, welches die typischen Aufgaben ausführt. Dem entsprechend ist der Algorithmus auch nicht für große Karten ausgelegt, bei denen große Loops geschlossen werden müssen. Das Loop-Closing ist nicht explizit implementiert. Besser ist daher die Anwendung in kleinen Karten wie beispielsweise dem RoboCup Rescue, bei dem bestimmte Ziele gerettet werden müssen. Dabei ist die hohe Frequenz des Laserscanners wichtig, damit trotz der Bewegung Ziele auch auf unebenen Ebenen schnell erkannt werden können.
+
+Das hector\_mapping nutzt ausschließlich die Daten des Laser-Scanners als Eingabequelle. Es werden keine zusätzlichen Odometrie-Daten oder IMU-Daten genutzt. Der Prozess besteht aus drei Schritten:
+\begin{enumerate}
+  \item Preprocessing
+  \item Scan Matching
+  \item Mapping
+\end{enumerate}
+Zunächst kommen die Scans im System an und werden zu Point-Clouds weiterverarbeitet, in dem die aktuelle Lage des Roboters und die Daten des Laser-Scanners gemeinsam verarbeitet werden. Es besteht die Möglichkeit, die Liste der Scans vorher zu filtern, um beispielsweise Ausreißer zu entfernen oder um auf Grund der Menge der Datensätze nur einige davon zu betrachten.
+
+Beim Scan Matching werden dann die Scans der Map zugeordnet. Dabei werden beim hector\_mapping die Endpunkte eines Scans mit Hilfe der bisher aufgenommenen Karte optimiert. Dabei kommt das Gauß-Newton-Verfahren inspiriert aus der Computer Vision zum Einsatz. Es wird eine Transformation für den Scan gesucht, die am besten zur aktuellen Karte passt. Es handelt sich wie auch beim Cartographer um ein Minimierungsproblem:
+
+\begin{align}
+    \underset{\xi}{\argmin} { \sum_{i=1}^n {[1 - M(S_{i}(\xi))]^{ 2 }} }
+\end{align}
+
+Die Funktion $ M $ gibt die Koordinate auf der Karte zurück. Die innere Funktion $ S_{i}(\xi) $ gibt die Koordinaten der Scans. Dieser haben als Parameter die Variable $ \xi $, welche die Lage des Roboters ist.
+\begin{align}
+    S_{i}(\xi) = \begin{pmatrix}
+\cos(\psi) & -\sin(\psi)\\ 
+\sin(\psi) & \ \ \ \ \cos(\psi)
+\end{pmatrix} \begin{pmatrix}
+s_{i,x}\\
+s_{i,y}
+\end{pmatrix} + \begin{pmatrix}
+p_{x}\\
+p_{y}
+\end{pmatrix}
+\end{align}
+Das Ziel ist es nun zu berechnen, was passiert, wenn diese 2D-Rotationsmatrix gegen null geht, sprich das globale Minimum zu finden. Des Weiteren wird ein Startwert für $ \xi $ dazu gegeben.
+
+\begin{align}
+    \sum_{i=1}^n {[1 - M(S_{i}(\xi + \Delta\xi))]^{ 2 }} \to 0
+\end{align}
+
+Jeder Bergsteigeralgorithmus sowie jedes Gradientenabstiegsverfahren kann in einem lokalen Minimum hängen bleiben. Daher wird beim hector\_mapping, um dem entgegenzuwirken, eine Multi-Resolution Map Representation genutzt. \autocite{KohlbrecherMeyerStrykKlingaufFlexibleSlamSystem2011}
+
+\subsection{Verwendung im \acl{ROS}} \label{rosVerwendungHectormapping}
+
+Damit das Package hector\_mapping eine Karte im \ac{ROS} erstellen kann, muss ebenfalls nur eine einzige Node, die hector\_mapping-Node, gestartet werden. Diese benötigt einige Topics (siehe \autoref{hector-mapping-Topic-Abonnements}). Das Ergebnis der Berechnungen publiziert die Node dann in den folgenden Topics (siehe \autoref{hector-mapping-Topic-Veröffentlichungen}).
+
+\begin{table}[t]
+  \caption{Topic-Abonnements des Packages hector\_mapping}
+  \label{hector-mapping-Topic-Abonnements}
+  \centering
+  \sffamily
+  \begin{footnotesize}
+    \begin{tabular}{l l l}
+    \toprule
+    \textbf{Topic} & \textbf{Topic-Typ} & \textbf{Optional}\\
+    \midrule
+    scan	& sensor\_msgs/LaserScan & Nein\\
+    syscommand & std\_msgs/String & Ja\\
+    \bottomrule
+    \end{tabular}
+  \end{footnotesize}
+  \rmfamily
+\end{table}
+
+\begin{table}[t]
+  \caption{Topic-Veröffentlichungen des Packages hector\_mapping}
+  \label{hector-mapping-Topic-Veröffentlichungen}
+  \centering
+  \sffamily
+  \begin{footnotesize}
+    \begin{tabular}{l l}
+    \toprule
+    \textbf{Topic} & \textbf{Topic-Typ}\\
+    \midrule
+    map\_metadata & nav\_msgs/MapMetaData\\
+    map & nav\_msgs/OccupancyGrid\\
+    slam\_out\_pose & geometry\_msgs/PoseStamped\\
+    poseupdate & geometry\_msgs/PoseWithCovarianceStamped\\
+    \bottomrule
+    \end{tabular}
+  \end{footnotesize}
+  \rmfamily
+\end{table}
+
+Das hector\_mapping benötigt exakt eine TF-Transformation. Diese ist die Transformation vom Frame, welches zu den eingehenden Scan gehört, zur Basis (alias base\_link).
+
+So wie alle anderen Packages stellt das hector\_mapping ebenfalls eine TF-Transformation zur Verfügung. Dies ist die Transformationen von der Karte (alias map) zur Odometrie (alias odom). \autocite{hectorMappingRosWiki}
+
+\section{gmapping}
+
+\subsection{Algorithmus}
+
+Gmapping ist ein weiterer Kartierungsalgorithmus. Im Gegensatz zum Cartographer und zum hector\_mapping nutzt Gmapping einen Partikelfilter für das \ac{SLAM}-Problem. Dieser ist der Rao Blackwellized Particle Filter.
+
+Dieser Filter basiert darauf die A-posteriori-Wahrscheinlichkeit $ p(x_{1:t} | z_{1:t},u_{0:t}) $ zu berechnen. Dabei ist $ p $ die aktualisierte Wahrscheinlichkeit, ob das Feld auf der Karte gesetzt ist, $ z $ sind die Scans und $ u $ sind die Odometrie-Daten. Dies wird genutzt, um die A-posteriori-Wahrscheinlichkeit über die Karte und die Trajektorie zu berechnen.
+\begin{align}
+    p(x_{1:t}, m | z_{1:t},u_{0:t}) = p(m | x_{1:t}, z_{1:t})p(x_{1:t} | z_{1:t},u_{0:t})
+\end{align}
+Dies lässt sich für die A-posteriori-Wahrscheinlichkeit über die Karte $ p(m | x_{1:t}, z_{1:t}) $ berechnen, wenn $ x_{1:t} $ und $ z_{1:t} $ gegeben sind. Um die A-posteriori-Wahrscheinlichkeit für die Trajektorie $ p(x_{1:t} | z_{1:t},u_{0:t}) $ zu berechnen, nutzt der Algorithmus einen weiteren Partikelfilter.
+
+Die Karte wird durch die Scans $ z_{1:t} $, sowie die Trajektorie $ x_{1:t} $ zusammengestellt. Es wird ein Rao-Blackwellized \ac{SIR}-Filter genutzt, der die Scans und die Odometrie-Daten inkrementell zu einer Karte zusammenfügt. Die Odometrie-Daten werden genutzt, sofern sie vorhanden sind. Der Prozess läuft im Allgemeinen wie folgt ab:
+
+\begin{enumerate}
+  \item \textit{Sampling}: Über die Verteilung $ \pi(x_{t} | z_{1:t},u_{0:t}) $ werden über die aktuellen Partikel die neuen Partikel entnommen.
+  \item \textit{Importance Weighting}: Jeder Partikel erhält eine Gewichtung.
+  \item \textit{Resampling}: Partikel mit einer geringen Gewichtung werden durch Partikel mit einer höheren Gewichtung ausgetauscht.
+  \item \textit{Map Estimation}: Für jeden Partikel wird die dazugehörige Schätzung auf der Karte berechnet.
+\end{enumerate}
+
+Für den gmapping-Algorithmus wird zusätzlich zu dem genannten Ablauf noch eine verbesserte Verteilung berechnet. Außerdem wird ein selektives Resampling genutzt. \autocite{gmapping} \autocite{gmapping2}
+
+\subsection{Verwendung im \acl{ROS}} \label{rosVerwendungGmapping}
+
+Damit das Package gmapping eine Karte im \ac{ROS} erstellen kann, muss nur eine einzige Node, die slam\_gmapping-Node, gestartet werden. Diese benötigt einige Topics (siehe \autoref{gmapping-Topic-Abonnements}). Das Ergebnis der Berechnungen publiziert die Node dann in den folgenden Topics (siehe \autoref{gmapping-Topic-Veröffentlichungen}).
+
+\begin{table}[t]
+  \caption{Topic-Abonnements des Packages gmapping}
+  \label{gmapping-Topic-Abonnements}
+  \centering
+  \sffamily
+  \begin{footnotesize}
+    \begin{tabular}{l l l}
+    \toprule
+    \textbf{Topic} & \textbf{Topic-Typ} & \textbf{Optional}\\
+    \midrule
+    scan	& sensor\_msgs/LaserScan & Nein\\
+    \bottomrule
+    \end{tabular}
+  \end{footnotesize}
+  \rmfamily
+\end{table}
+
+\begin{table}[t]
+  \caption{Topic-Veröffentlichungen des Packages gmapping}
+  \label{gmapping-Topic-Veröffentlichungen}
+  \centering
+  \sffamily
+  \begin{footnotesize}
+    \begin{tabular}{l l}
+    \toprule
+    \textbf{Topic} & \textbf{Topic-Typ}\\
+    \midrule
+    map\_metadata & nav\_msgs/MapMetaData\\
+    map & nav\_msgs/OccupancyGrid\\
+    ~entropy & std\_msgs/Float64)\\
+    \bottomrule
+    \end{tabular}
+  \end{footnotesize}
+  \rmfamily
+\end{table}
+
+Gmapping benötigt ebenfalls noch einige TF-Transformationen. Dieses ist einmal eine Transformation vom Frame, welches zu den eingehenden Scan gehört, zur Basis (alias base\_link). Des weiteren wird eine Transformation von der Basis (base\_link) zur Odometrie (alias odom) benötigt.
+
+Auch Gmapping stellt eine TF-Transformation zur Verfügung. Dies ist die Transformationen von der Karte (alias map) zur Odometrie (alias odom). \autocite{gmappingRosWiki}

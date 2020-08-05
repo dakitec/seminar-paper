@@ -1,0 +1,17 @@
+\chapter{Einleitung}
+
+\section{Motivation}
+
+Für mobile Roboter ist es eine wichtige Aufgabe, sich in einer unbekannten Umgebung zurechtzufinden. Dazu ist ein nötiger erster Schritt die Kartierung der Umgebung. Diese Kartierung bringt einige neue Herausforderungen mit sich, die jeder Algorithmus unterschiedlich löst. Die Algorithmen bieten Implementierungen für das \ac{ROS}. Da jeder Roboter andere Sensordaten liefern, muss auch der Algorithmus so dynamisch gestaltet sein, dass er mit verschiedenen Daten umgehen kann. Dementsprechend muss der Anwender spezielle Launch-Files und Konfigurationen definieren, um den Algorithmus für den jeweiligen Roboter möglichst gut abzubilden.
+
+\section{Ziel der Arbeit}
+
+Ziel dieser Arbeit ist es deshalb darzustellen, welche Kartierungsalgorithmen existieren und wie diese sich für den Pioneer 3-DX Roboter in das \ac{ROS} integrieren lassen. Im Detail soll ein \ac{ROS}-Package entwickelt werden, welches die optimierten Launch-Files und Konfigurationen für die drei Kartierungsalgorithmen \textit{Cartographer}, \textit{gmapping} und \textit{hector\_mapping} enthält. Die Arbeit soll außerdem einen Überblick über die Installation dieser Packages geben sowie eine Anleitung, wie die Online- oder Offline-Kartierung gestartet werden kann. Des weiteren ist es Ziel dieser Arbeit die Algorithmen auszuführen und einige Szenarien mit diesen zu durchlaufen und auszuwerten.
+
+\section{Aufbau der Arbeit}
+
+Zuerst werden die Grundlagen in \autoref{Kap2} behandelt. Diese sind die Grundlagen über das \ac{ROS} sowie die des Roboters Pioneer 3-DX.
+
+Der Hauptteil befasst sich in \autoref{Kap3} zunächst mit den drei Kartierungsalgorithmen \textit{Cartographer}, \textit{gmapping} und \textit{hector\_mapping}. Dabei wird beschrieben, wie die Algorithmen technisch funktionieren und wie sie sich in das \ac{ROS} integrieren lassen. \autoref{Kap4} implementiert diese Algorithmen durch Launch- und Konfigurationsfiles in einem eigenen \ac{ROS}-Package für den Pioneer 3-DX. In \autoref{Kap5} werden die Implementierungen in zwei Indoor-Szenarien mit diesem Roboter getestet.
+
+Zum Abschluss bietet \autoref{Kap6} eine Zusammenfassung und \autoref{Kap7} einen Ausblick, wie die Kartierung sonst noch hätte verbessert werden können.
